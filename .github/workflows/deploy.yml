@@ -1,0 +1,50 @@
+name: Deploy Backend and Frontend Using Docker Compose
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: SSH and Deploy to EC2
+      uses: appleboy/ssh-action@v0.1.7
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ec2-user
+        key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+        port: 22
+        command_timeout: 30m
+        script: |
+          cd /home/ec2-user/curd
+          git pull origin main
+
+          # Swap Memory Create
+          sudo fallocate -l 2G /swapfile || true
+          sudo chmod 600 /swapfile || true
+          sudo mkswap /swapfile || true
+          sudo swapon /swapfile || true
+          sudo swapon --show
+
+          # Build Backend (no copy needed)
+          cd springboot-backend
+          ./mvnw clean package -DskipTests || mvn clean package -DskipTests
+          cd ..
+
+          # Build Frontend
+          cd angular-frontend
+          export NODE_OPTIONS=--openssl-legacy-provider
+          npm install --legacy-peer-deps || { echo "❌ npm install failed"; exit 1; }
+          npm run build -- --configuration=development || { echo "❌ Angular build failed"; exit 1; }
+          cd ..
+
+          # Docker Compose Up
+          docker-compose down
+          docker-compose build backend
+          docker-compose up -d
